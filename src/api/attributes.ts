@@ -10,6 +10,12 @@ import { isTag, type AnyNode, type Element } from 'domhandler';
 import type { Cheerio } from '../cheerio.js';
 import { innerText, textContent } from 'domutils';
 import { ElementType } from 'htmlparser2';
+import {
+  getCachedAttribute,
+  setCachedAttribute,
+  hasAttributeCache,
+  invalidateAttributeCache,
+} from '../performance.js';
 const hasOwn =
   // @ts-expect-error `hasOwn` is a standard object method
   (Object.hasOwn as (object: unknown, prop: string) => boolean) ??
@@ -61,26 +67,42 @@ function getAttr(
     return elem.attribs;
   }
 
+  // Check cache first
+  if (hasAttributeCache(elem, name)) {
+    const cached = getCachedAttribute(elem, name);
+    // Verify the cached value is still valid
+    if (hasOwn(elem.attribs, name)) {
+      const currentValue =
+        !xmlMode && rboolean.test(name) ? name : elem.attribs[name];
+      if (cached === currentValue) {
+        return cached;
+      }
+    }
+  }
+
+  let result: string | undefined;
+
   if (hasOwn(elem.attribs, name)) {
     // Get the (decoded) attribute
-    return !xmlMode && rboolean.test(name) ? name : elem.attribs[name];
-  }
-
-  // Mimic the DOM and return text content as value for `option's`
-  if (elem.name === 'option' && name === 'value') {
-    return text(elem.children);
-  }
-
-  // Mimic DOM with default value for radios/checkboxes
-  if (
+    result = !xmlMode && rboolean.test(name) ? name : elem.attribs[name];
+  } else if (elem.name === 'option' && name === 'value') {
+    // Mimic the DOM and return text content as value for `option's`
+    result = text(elem.children);
+  } else if (
     elem.name === 'input' &&
     (elem.attribs['type'] === 'radio' || elem.attribs['type'] === 'checkbox') &&
     name === 'value'
   ) {
-    return 'on';
+    // Mimic DOM with default value for radios/checkboxes
+    result = 'on';
   }
 
-  return undefined;
+  // Cache the result
+  if (result !== undefined) {
+    setCachedAttribute(elem, name, result);
+  }
+
+  return result;
 }
 
 /**
@@ -98,6 +120,8 @@ function setAttr(el: Element, name: string, value: string | null) {
   } else {
     el.attribs[name] = `${value}`;
   }
+  // Invalidate attribute cache when setting
+  invalidateAttributeCache(el);
 }
 
 /**

@@ -24,6 +24,12 @@ import {
   uniqueSort,
 } from 'domutils';
 import type { FilterFunction, AcceptedFilters } from '../types.js';
+import {
+  parseSimpleSelector,
+  fastFindById,
+  fastFindByClass,
+  fastFindByTag,
+} from '../performance.js';
 const reSiblingSelector = /^\s*[+~]/;
 
 /**
@@ -87,6 +93,35 @@ export function _findBySelector<T extends AnyNode>(
     ? context
     : this.children().toArray();
 
+  // Fast path for simple selectors (only in HTML mode, not XML mode for case sensitivity)
+  // Also skip if we have sibling selectors
+  const selectorInfo = parseSimpleSelector(selector);
+  let results: Element[] | null = null;
+
+  if (
+    selectorInfo.type !== 'complex' &&
+    limit === Number.POSITIVE_INFINITY &&
+    !this.options.xmlMode &&
+    !reSiblingSelector.test(selector)
+  ) {
+    switch (selectorInfo.type) {
+      case 'id':
+        results = fastFindById(elems, selectorInfo.value!);
+        break;
+      case 'class':
+        results = fastFindByClass(elems, selectorInfo.value!);
+        break;
+      case 'tag':
+        results = fastFindByTag(elems, selectorInfo.value!);
+        break;
+    }
+
+    if (results) {
+      return this._make(results);
+    }
+  }
+
+  // Fall back to standard selector engine
   const options = {
     context,
     root: this._root?.[0],
@@ -99,7 +134,9 @@ export function _findBySelector<T extends AnyNode>(
     quirksMode: this.options.quirksMode,
   };
 
-  return this._make(select.select(selector, elems, options, limit));
+  results = select.select(selector, elems, options, limit);
+
+  return this._make(results);
 }
 
 /**
